@@ -37,6 +37,7 @@ function createGameState() {
     hackBeepTimer: 0,
     spottedBefore: false,
     canEscape: false,
+    effects: [],
   };
 }
 
@@ -131,6 +132,12 @@ function nearestPanelInReach(state) {
 function updatePlaying(state, dt, input, audio) {
   const { world, thief, vault } = state;
   state.elapsed += dt;
+
+  // Floating feedback effects age out and vanish.
+  for (let i = state.effects.length - 1; i >= 0; i--) {
+    state.effects[i].ttl -= dt;
+    if (state.effects[i].ttl <= 0) state.effects.splice(i, 1);
+  }
 
   // --- Movement: keys win over a click-to-walk target. ---
   const vec = input.moveVector();
@@ -233,6 +240,7 @@ function updatePlaying(state, dt, input, audio) {
   if (crackResult === 'cracked') {
     audio.vaultCracked();
     state.alarm = clamp(state.alarm + TUNING.vaultOpenAlarmBump, 0, 100);
+    state.effects.push({ x: world.vault.x + world.vault.w / 2, y: world.vault.y + world.vault.h / 2, text: 'VAULT OPEN!', ttl: 1.2, max: 1.2 });
   } else if (crackResult === 'reset') {
     audio.spotted();
   }
@@ -249,6 +257,7 @@ function updatePlaying(state, dt, input, audio) {
   if (taken) {
     audio.lootChime();
     state.alarm = clamp(state.alarm + TUNING.lootAlarmBump, 0, 100);
+    state.effects.push({ x: taken.x, y: taken.y, text: `+$${taken.value}`, ttl: 0.9, max: 0.9 });
   }
 
   // --- Escape: vault open, enough loot, standing on the green mat. ---
