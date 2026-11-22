@@ -108,14 +108,21 @@ function drawVault(ctx, world, vault) {
     ctx.fillRect(bx, by, barW * vault.hackProgress, 10);
     ctx.fillStyle = '#eef1f8';
     ctx.font = 'bold 11px sans-serif';
-    ctx.fillText('CRACKING…', v.x + v.w / 2, by + 26);
+    ctx.fillText(`CRACKING… ${Math.round(vault.hackProgress * 100)}%`, v.x + v.w / 2, by + 26);
   }
 }
 
-function drawLoot(ctx, vault) {
+function drawLoot(ctx, vault, t) {
   for (const pile of vault.loot) {
     if (pile.taken) continue;
-    const bob = 0;
+    // Loot breathes: a gentle bob and a pulsing halo so piles read as
+    // treasure worth detouring for, not flat dots on the floor.
+    const bob = Math.sin(t * 3 + pile.x * 0.05 + pile.y * 0.03) * 2.5;
+    const glow = 0.5 + 0.5 * Math.sin(t * 3 + pile.x * 0.05 + pile.y * 0.03);
+    ctx.fillStyle = pile.kind === 'gold' ? 'rgba(242, 193, 78, 0.20)' : 'rgba(88, 201, 107, 0.20)';
+    ctx.beginPath();
+    ctx.arc(pile.x, pile.y + bob, 15 + glow * 4, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = pile.kind === 'gold' ? COLORS.lootGold : COLORS.lootCash;
     ctx.beginPath();
     ctx.arc(pile.x, pile.y + bob, 11, 0, Math.PI * 2);
@@ -325,11 +332,97 @@ function drawCenterPanel(ctx, lines, accent) {
   ctx.textAlign = 'left';
 }
 
+// Where the thief should head next: the vault while it is shut, the
+// nearest remaining loot once it is open, the EXIT once escape is legal.
+function objectiveTarget(state) {
+  const { world, vault, thief } = state;
+  if (!vault.open) {
+    return { x: world.vault.x + world.vault.w / 2, y: world.vault.y + world.vault.h / 2, label: 'VAULT' };
+  }
+  const exit = { x: world.exitMat.x + world.exitMat.w / 2, y: world.exitMat.y + world.exitMat.h / 2, label: 'EXIT' };
+  if (state.canEscape) return exit;
+  let best = null;
+  let bestDist = Infinity;
+  for (const pile of vault.loot) {
+    if (pile.taken) continue;
+    const d = Math.hypot(pile.x - thief.x, pile.y - thief.y);
+    if (d < bestDist) { bestDist = d; best = pile; }
+  }
+  return best ? { x: best.x, y: best.y, label: 'LOOT' } : exit;
+}
+
+// A pulsing gold chevron hovering off the thief, aimed at the current
+// objective — a new player always knows where the heist goes next.
+function drawObjectiveArrow(ctx, state) {
+  if (state.screen !== 'play') return;
+  const target = objectiveTarget(state);
+  const dx = target.x - state.thief.x;
+  const dy = target.y - state.thief.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 80) return;
+  const angle = Math.atan2(dy, dx);
+  const pulse = 1 + Math.sin(state.elapsed * 5) * 0.15;
+  const ax = state.thief.x + Math.cos(angle) * 44;
+  const ay = state.thief.y + Math.sin(angle) * 44;
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.rotate(angle);
+  ctx.scale(pulse, pulse);
+  ctx.fillStyle = 'rgba(242, 193, 78, 0.92)';
+  ctx.beginPath();
+  ctx.moveTo(13, 0);
+  ctx.lineTo(-8, -8);
+  ctx.lineTo(-3, 0);
+  ctx.lineTo(-8, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = 'rgba(242, 193, 78, 0.9)';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(target.label, ax, ay + 24);
+}
+
+// As the alarm climbs the screen edges throb red; while hunted the
+// pulse quickens — tension you can feel without reading the meter.
+function drawAlarmVignette(ctx, state) {
+  if (state.screen !== 'play' || state.alarm < 40) return;
+  const rate = state.hunt ? 9 : 5;
+  const pulse = 0.5 + 0.5 * Math.sin(state.elapsed * rate);
+  const heat = clamp((state.alarm - 40) / 60, 0, 1);
+  const alpha = heat * (0.10 + 0.16 * pulse) * (state.hunt ? 1.5 : 1);
+  ctx.save();
+  ctx.strokeStyle = `rgba(255, 40, 40, ${alpha.toFixed(3)})`;
+  ctx.lineWidth = 34;
+  ctx.strokeRect(17, 17, WORLD.width - 34, WORLD.height - 34);
+  ctx.restore();
+}
+
+// Floating feedback: "+$300" over a pocketed pile, "VAULT OPEN!" over
+// the door — spawned by main.js into state.effects with a ttl.
+function drawEffects(ctx, state) {
+  for (const fx of state.effects || []) {
+    const life = clamp(fx.ttl / fx.max, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, life * 1.8);
+    ctx.strokeStyle = '#f2c14e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(fx.x, fx.y, 12 + (1 - life) * 18, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffe9b0';
+    ctx.font = 'bold 17px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(fx.text, fx.x, fx.y - 16 - (1 - life) * 26);
+    ctx.restore();
+  }
+}
+
 export function drawGame(ctx, state) {
   const { world, vault, guards, cameras, thief } = state;
   drawFloor(ctx, world);
   drawShadowSpots(ctx, world);
-  drawLoot(ctx, vault);
+  drawLoot(ctx, vault, state.elapsed);
   drawExit(ctx, world, state.canEscape);
   drawPanels(ctx, world, state.panelProgress);
   drawVault(ctx, world, vault);
@@ -337,6 +430,9 @@ export function drawGame(ctx, state) {
   drawCameras(ctx, cameras);
   drawGuards(ctx, guards);
   drawThief(ctx, thief);
+  drawEffects(ctx, state);
+  drawObjectiveArrow(ctx, state);
+  drawAlarmVignette(ctx, state);
   drawHud(ctx, state);
 
   if (state.screen === 'title') {
@@ -346,6 +442,8 @@ export function drawGame(ctx, state) {
       { text: 'WASD / arrows to sneak — click to walk — hold E to crack the vault or cut a camera', font: '18px sans-serif' },
       { text: 'Grab at least 3 loot, crack the vault, then escape through the green EXIT.', font: '18px sans-serif' },
       { text: 'Stay out of the yellow guard cones and the red camera cones.', font: '18px sans-serif' },
+      { text: 'Blue SHADOW zones hide you — break line of sight there to cool the alarm.', font: '18px sans-serif' },
+      { text: 'Follow the gold arrow: it always points at your next objective.', font: '18px sans-serif' },
       { text: 'Press ENTER or click to start the heist', font: 'bold 20px sans-serif', color: '#39c2d7' },
     ], '#f2c14e');
   } else if (state.screen === 'caught') {
